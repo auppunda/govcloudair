@@ -188,19 +188,7 @@ func (v *Vdc) FindEdgeGateway(edgegateway string) (EdgeGateway, error) {
 				return EdgeGateway{}, fmt.Errorf("error decoding edge gateway query response: %s", err)
 			}
 
-			var href string
-
-			for _, edge := range query.EdgeGatewayRecord {
-				if edge.Name == edgegateway {
-					href = edge.HREF
-				}
-			}
-
-			if href == "" {
-				return EdgeGateway{}, fmt.Errorf("can't find edge gateway with name: %s", edgegateway)
-			}
-
-			u, err = url.ParseRequestURI(href)
+			u, err = url.ParseRequestURI(query.EdgeGatewayRecord.HREF)
 			if err != nil {
 				return EdgeGateway{}, fmt.Errorf("error decoding edge gateway query response: %s", err)
 			}
@@ -326,12 +314,6 @@ func (v *Vdc) FindVMByName(vapp VApp, vm string) (VM, error) {
 	err = vapp.Refresh()
 	if err != nil {
 		return VM{}, fmt.Errorf("error refreshing vapp: %s", err)
-	}
-
-	//vApp Might Not Have Any VMs
-
-	if vapp.VApp.Children == nil {
-		return VM{}, fmt.Errorf("VApp Has No VMs")
 	}
 
 	log.Printf("[TRACE] Looking for VM: %s", vm)

@@ -11,9 +11,9 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strconv"
 
 	types "github.com/ukcloud/govcloudair/types/v56"
-	"strconv"
 )
 
 type VApp struct {
@@ -60,7 +60,8 @@ func (v *VApp) Refresh() error {
 	return nil
 }
 
-func (v *VApp) AddVM(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate VAppTemplate, name string) (Task, error) {
+func (v *VApp) AddVM(orgvdcnetwork OrgVDCNetwork, vapptemplate VAppTemplate, name string, accept_all_eulas bool) (Task, error) {
+
 
 	vcomp := &types.ReComposeVAppParams{
 		Ovf:         "http://schemas.dmtf.org/ovf/envelope/1",
@@ -81,28 +82,21 @@ func (v *VApp) AddVM(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate VAppTem
 					HREF: vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.HREF,
 					Info: "Network config for sourced item",
 					PrimaryNetworkConnectionIndex: vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.PrimaryNetworkConnectionIndex,
+					NetworkConnection: &types.NetworkConnection{
+						Network:                 orgvdcnetwork.OrgVDCNetwork.Name,
+						NetworkConnectionIndex:  vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.NetworkConnection.NetworkConnectionIndex,
+						IsConnected:             true,
+						IPAddressAllocationMode: "POOL",
+					},
 				},
 			},
+			NetworkAssignment: &types.NetworkAssignment{
+				InnerNetwork:     orgvdcnetwork.OrgVDCNetwork.Name,
+				ContainerNetwork: orgvdcnetwork.OrgVDCNetwork.Name,
+			},
 		},
+		AllEULAsAccepted: accept_all_eulas,
 	}
-
-	for index, orgvdcnetwork := range orgvdcnetworks {
-		vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection = append(vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection,
-			&types.NetworkConnection{
-				Network:                 orgvdcnetwork.Name,
-				NetworkConnectionIndex:  index,
-				IsConnected:             true,
-				IPAddressAllocationMode: "POOL",
-			},
-		)
-		vcomp.SourcedItem.NetworkAssignment = append(vcomp.SourcedItem.NetworkAssignment,
-			&types.NetworkAssignment{
-				InnerNetwork:     orgvdcnetwork.Name,
-				ContainerNetwork: orgvdcnetwork.Name,
-			},
-		)
-	}
-	log.Printf("%s", vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection)
 
 	output, _ := xml.MarshalIndent(vcomp, "  ", "    ")
 
@@ -121,6 +115,8 @@ func (v *VApp) AddVM(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate VAppTem
 	if err != nil {
 		return Task{}, fmt.Errorf("error instantiating a new VM: %s", err)
 	}
+
+
 
 	task := NewTask(v.c)
 
@@ -184,9 +180,9 @@ func (v *VApp) RemoveVM(vm VM) error {
 	return nil
 }
 
-func (v *VApp) ComposeVApp(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate VAppTemplate, storageprofileref types.Reference, name string, description string) (Task, error) {
+func (v *VApp) ComposeVApp(orgvdcnetwork OrgVDCNetwork, vapptemplate VAppTemplate, storageprofileref types.Reference, name string, description string) (Task, error) {
 
-	if vapptemplate.VAppTemplate.Children == nil || orgvdcnetworks == nil {
+	if vapptemplate.VAppTemplate.Children == nil || orgvdcnetwork.OrgVDCNetwork == nil {
 		return Task{}, fmt.Errorf("can't compose a new vApp, objects passed are not valid")
 	}
 
@@ -202,6 +198,17 @@ func (v *VApp) ComposeVApp(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate V
 		InstantiationParams: &types.InstantiationParams{
 			NetworkConfigSection: &types.NetworkConfigSection{
 				Info: "Configuration parameters for logical networks",
+				NetworkConfig: &types.VAppNetworkConfiguration{
+					NetworkName: orgvdcnetwork.OrgVDCNetwork.Name,
+					Configuration: &types.NetworkConfiguration{
+						FenceMode: "bridged",
+						ParentNetwork: &types.Reference{
+							HREF: orgvdcnetwork.OrgVDCNetwork.HREF,
+							Name: orgvdcnetwork.OrgVDCNetwork.Name,
+							Type: orgvdcnetwork.OrgVDCNetwork.Type,
+						},
+					},
+				},
 			},
 		},
 		SourcedItem: &types.SourcedCompositionItemParam{
@@ -215,48 +222,40 @@ func (v *VApp) ComposeVApp(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate V
 					HREF: vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.HREF,
 					Info: "Network config for sourced item",
 					PrimaryNetworkConnectionIndex: vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.PrimaryNetworkConnectionIndex,
-				},
-			},
-		},
-	}
-
-	for index, orgvdcnetwork := range orgvdcnetworks {
-		vcomp.InstantiationParams.NetworkConfigSection.NetworkConfig = append(vcomp.InstantiationParams.NetworkConfigSection.NetworkConfig,
-			types.VAppNetworkConfiguration{
-				NetworkName: orgvdcnetwork.Name,
-				Configuration: &types.NetworkConfiguration{
-					FenceMode: "bridged",
-					ParentNetwork: &types.Reference{
-						HREF: orgvdcnetwork.HREF,
-						Name: orgvdcnetwork.Name,
-						Type: orgvdcnetwork.Type,
+					NetworkConnection: &types.NetworkConnection{
+						Network:                 orgvdcnetwork.OrgVDCNetwork.Name,
+						IsConnected:             true,
+						IPAddressAllocationMode: "POOL",
 					},
 				},
 			},
-		)
-		vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection = append(vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection,
-			&types.NetworkConnection{
-				Network:                 orgvdcnetwork.Name,
-				NetworkConnectionIndex:  index,
-				IsConnected:             true,
-				IPAddressAllocationMode: "POOL",
+			NetworkAssignment: &types.NetworkAssignment{
+				InnerNetwork:     orgvdcnetwork.OrgVDCNetwork.Name,
+				ContainerNetwork: orgvdcnetwork.OrgVDCNetwork.Name,
 			},
-		)
-		vcomp.SourcedItem.NetworkAssignment = append(vcomp.SourcedItem.NetworkAssignment,
-			&types.NetworkAssignment{
-				InnerNetwork:     orgvdcnetwork.Name,
-				ContainerNetwork: orgvdcnetwork.Name,
-			},
-		)
+		},
 	}
 
 	if storageprofileref.HREF != "" {
 		vcomp.SourcedItem.StorageProfile = &storageprofileref
 	}
 
+	// ensure network connection index is valid, if not use primary index
+	if vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.NetworkConnection != nil {
+		vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection.NetworkConnectionIndex = vapptemplate.VAppTemplate.Children.VM[0].NetworkConnectionSection.NetworkConnection.NetworkConnectionIndex
+	} else {
+		vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.NetworkConnection.NetworkConnectionIndex = vcomp.SourcedItem.InstantiationParams.NetworkConnectionSection.PrimaryNetworkConnectionIndex
+	}
+
 	output, err := xml.MarshalIndent(vcomp, "  ", "    ")
 	if err != nil {
 		return Task{}, fmt.Errorf("error marshaling vapp compose: %s", err)
+	}
+
+	debug := os.Getenv("GOVCLOUDAIR_DEBUG")
+
+	if debug == "true" {
+		fmt.Printf("\n\nXML DEBUG: %s\n\n", string(output))
 	}
 
 	log.Printf("\n\nXML DEBUG: %s\n\n", string(output))
@@ -284,6 +283,7 @@ func (v *VApp) ComposeVApp(orgvdcnetworks []*types.OrgVDCNetwork, vapptemplate V
 
 	// The request was successful
 	return *task, nil
+
 }
 
 func (v *VApp) PowerOn() (Task, error) {
@@ -606,33 +606,6 @@ func (v *VApp) GetStatus() (string, error) {
 	return types.VAppStatuses[v.VApp.Status], nil
 }
 
-func (v *VApp) GetNetworkConnectionSection() (*types.NetworkConnectionSection, error) {
-
-	networkConnectionSection := &types.NetworkConnectionSection{}
-
-	if v.VApp.Children.VM[0].HREF == "" {
-		return networkConnectionSection, fmt.Errorf("cannot refresh, Object is empty")
-	}
-
-	u, _ := url.ParseRequestURI(v.VApp.Children.VM[0].HREF + "/networkConnectionSection/")
-
-	req := v.c.NewRequest(map[string]string{}, "GET", *u, nil)
-
-	req.Header.Add("Content-Type", "application/vnd.vmware.vcloud.networkConnectionSection+xml")
-
-	resp, err := checkResp(v.c.Http.Do(req))
-	if err != nil {
-		return networkConnectionSection, fmt.Errorf("error retrieving task: %s", err)
-	}
-
-	if err = decodeBody(resp, networkConnectionSection); err != nil {
-		return networkConnectionSection, fmt.Errorf("error decoding task response: %s", err)
-	}
-
-	// The request was successful
-	return networkConnectionSection, nil
-}
-
 func (v *VApp) ChangeCPUcount(size int) (Task, error) {
 
 	err := v.Refresh()
@@ -940,55 +913,51 @@ func (v *VApp) SetOvf(parameters map[string]string) (Task, error) {
 
 }
 
-func (v *VApp) ChangeNetworkConfig(networks []map[string]interface{}, ip string) (Task, error) {
+func (v *VApp) ChangeNetworkConfig(network, ip string) (Task, error) {
 	err := v.Refresh()
 	if err != nil {
-		return Task{}, fmt.Errorf("error refreshing VM before running customization: %v", err)
+		return Task{}, fmt.Errorf("error refreshing vapp before running customization: %v", err)
 	}
 
 	if v.VApp.Children == nil {
 		return Task{}, fmt.Errorf("vApp doesn't contain any children, aborting customization")
 	}
 
-	networksection, err := v.GetNetworkConnectionSection()
+	// Determine what type of address is requested for the vApp
+	ipAllocationMode := "NONE"
+	ipAddress := "Any"
 
-	for index, network := range networks {
-		// Determine what type of address is requested for the vApp
-		ipAllocationMode := "NONE"
-		ipAddress := "Any"
-
-		// TODO: Review current behaviour of using DHCP when left blank
-		if ip == "" || ip == "dhcp" || network["ip"] == "dhcp" {
-			ipAllocationMode = "DHCP"
-		} else if ip == "allocated" || network["ip"] == "allocated" {
-			ipAllocationMode = "POOL"
-		} else if ip == "none" || network["ip"] == "none" {
-			ipAllocationMode = "NONE"
-		} else if ip != "" || network["ip"] != "" {
-			ipAllocationMode = "MANUAL"
-			// TODO: Check a valid IP has been given
-			ipAddress = ip
-		}
-
-		log.Printf("[DEBUG] Function ChangeNetworkConfig() for %s invoked", network["orgnetwork"])
-
-		networksection.Xmlns = "http://www.vmware.com/vcloud/v1.5"
-		networksection.Ovf = "http://schemas.dmtf.org/ovf/envelope/1"
-		networksection.Info = "Specifies the available VM network connections"
-
-		networksection.NetworkConnection[index].NeedsCustomization = true
-		networksection.NetworkConnection[index].IPAddress = ipAddress
-		networksection.NetworkConnection[index].IPAddressAllocationMode = ipAllocationMode
-		networksection.NetworkConnection[index].MACAddress = ""
-
-		if network["is_primary"] == true {
-			networksection.PrimaryNetworkConnectionIndex = index
-		}
-
-		log.Printf("Networksection: %s", networksection)
+	// TODO: Review current behaviour of using DHCP when left blank
+	if ip == "" || ip == "dhcp" {
+		ipAllocationMode = "DHCP"
+	} else if ip == "allocated" {
+		ipAllocationMode = "POOL"
+	} else if ip == "none" {
+		ipAllocationMode = "NONE"
+	} else if ip != "" {
+		ipAllocationMode = "MANUAL"
+		// TODO: Check a valid IP has been given
+		ipAddress = ip
 	}
 
-	output, err := xml.MarshalIndent(networksection, "  ", "    ")
+	networkConnection := &types.NetworkConnection{
+		Network:                 network,
+		NeedsCustomization:      true,
+		NetworkConnectionIndex:  0,
+		IPAddress:               ipAddress,
+		IsConnected:             true,
+		IPAddressAllocationMode: ipAllocationMode,
+	}
+
+	newnetwork := &types.NetworkConnectionSection{
+		Xmlns: "http://www.vmware.com/vcloud/v1.5",
+		Ovf:   "http://schemas.dmtf.org/ovf/envelope/1",
+		Info:  "Specifies the available VM network connections",
+		PrimaryNetworkConnectionIndex: 0,
+		NetworkConnection:             networkConnection,
+	}
+
+	output, err := xml.MarshalIndent(newnetwork, "  ", "    ")
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 	}
@@ -1115,35 +1084,31 @@ func (v *VApp) GetNetworkConfig() (*types.NetworkConfigSection, error) {
 	return networkConfig, nil
 }
 
-func (v *VApp) AddRAWNetworkConfig(orgvdcnetworks []*types.OrgVDCNetwork) (Task, error) {
+func (v *VApp) AddRAWNetworkConfig(networkName string, networkHref string) (Task, error) {
 
 	networkConfig := &types.NetworkConfigSection{
-		Info:  "Configuration parameters for logical networks",
-		Ovf:   "http://schemas.dmtf.org/ovf/envelope/1",
-		Type:  "application/vnd.vmware.vcloud.networkConfigSection+xml",
-		Xmlns: "http://www.vmware.com/vcloud/v1.5",
+		Info: "Configuration parameters for logical networks",
+		NetworkConfig: &types.VAppNetworkConfiguration{
+			NetworkName: networkName,
+			Configuration: &types.NetworkConfiguration{
+				ParentNetwork: &types.Reference{
+					HREF: networkHref,
+				},
+				FenceMode: "bridged",
+			},
+		},
 	}
 
-	for _, network := range orgvdcnetworks {
-		networkConfig.NetworkConfig = append(networkConfig.NetworkConfig,
-			types.VAppNetworkConfiguration{
-				NetworkName: network.Name,
-				Configuration: &types.NetworkConfiguration{
-					ParentNetwork: &types.Reference{
-						HREF: network.HREF,
-					},
-					FenceMode: "bridged",
-				},
-			},
-		)
-	}
+	networkConfig.Ovf = "http://schemas.dmtf.org/ovf/envelope/1"
+	networkConfig.Type = "application/vnd.vmware.vcloud.networkConfigSection+xml"
+	networkConfig.Xmlns = "http://www.vmware.com/vcloud/v1.5"
 
 	output, err := xml.MarshalIndent(networkConfig, "  ", "    ")
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 	}
 
-	log.Printf("[DEBUG] RAWNETWORK Config NetworkXML: %s", output)
+	log.Printf("[DEBUG] NetworkXML: %s", output)
 
 	b := bytes.NewBufferString(xml.Header + string(output))
 
